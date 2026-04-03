@@ -1038,8 +1038,8 @@ async function openCustModal(id) {
     const { collection, getDocs, query, where, orderBy } = F();
     const snap = await getDocs(query(
       collection(D(), 'transactions'),
-      where('customerId', '==', id),
-      orderBy('createdAt', 'desc')
+      where('customerId', '==', id)
+      // orderBy('createdAt', 'desc')
     ));
     const txs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     const isAdmin = currentUser.role === 'admin';
@@ -1066,7 +1066,7 @@ async function openCustModal(id) {
           <div class="tx-left">
             <div class="tx-badge ${tx.deleted?'deleted':tx.type}">${tx.deleted?'🗑':typeIcon[tx.type]||'📋'}</div>
             <div>
-              <div class="tx-note ${tx.deleted?'':''}' style="${tx.deleted?'color:var(--text2);text-decoration:line-through':''}">${tx.note||tx.type}</div>
+              <div class="tx-note" style="${tx.deleted?'color:var(--text2);text-decoration:line-through':''}">${tx.note||tx.type}</div>
               <div class="tx-meta">${tx.date||'—'} · ${tx.createdByName||'—'}${tx.deleted?` · <span style="color:var(--orange)">محذوف: ${tx.deleteReason||''}</span>`:''}</div>
             </div>
           </div>
@@ -1163,8 +1163,8 @@ async function printStatement(custId) {
     const snap = await getDocs(query(
       collection(D(), 'transactions'),
       where('customerId', '==', custId),
-      where('deleted', '==', false),
-      orderBy('date')
+      where('deleted', '==', false)
+      // orderBy('date')
     ));
     const txs = snap.docs.map(d => d.data());
     const typeLabel = { purchase: 'مشتريات', payment: 'سداد', opening: 'رصيد أول المدة' };
@@ -1214,7 +1214,7 @@ async function sendWhatsapp(custId) {
       collection(D(), 'transactions'),
       where('customerId', '==', custId),
       where('deleted', '==', false),
-      orderBy('createdAt', 'desc'),
+      // orderBy('createdAt', 'desc'),
       limit(5)
     ));
     const txs = snap.docs.map(d => d.data());
