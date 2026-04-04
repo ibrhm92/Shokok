@@ -1088,7 +1088,7 @@ function renderCustomers() {
         <div class="ci-avatar ${archived?'archived':''}">${c.name[0]}</div>
         <div>
           <div class="ci-name">${c.name} ${archived ? '<span style="font-size:10px;color:var(--text2)">[مؤرشف]</span>' : ''}</div>
-          <div class="ci-sub">${c.phone || 'بدون تليفون'}${c.debtLimit ? ' · حد: ' + fmt(c.debtLimit) + ' ج' : ''}</div>
+          <div class="ci-sub">${c.notes || '—'}${c.debtLimit ? ' · حد: ' + fmt(c.debtLimit) + ' ج' : ''}</div>
         </div>
       </div>
       <div class="ci-right">
