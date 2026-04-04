@@ -627,7 +627,13 @@ select option { background: var(--surface2); }
     <div class="page" id="page-import">
       <div class="card">
         <div class="card-title">📥 استيراد من Excel</div>
-        <p style="font-size:12px; color:var(--text2); margin-bottom:14px">العمود الأول: اسم العميل — العمود الثاني: رصيد أول المدة — الصف الأول يُتجاهل</p>
+        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:12px;color:var(--text2);line-height:1.9">
+          <div style="font-weight:700;color:var(--accent);margin-bottom:6px">📋 تنسيق الملف المطلوب:</div>
+          <div>🔹 <strong style="color:var(--text)">العمود الأول:</strong> اسم العميل</div>
+          <div>🔹 <strong style="color:var(--text)">العمود الثاني:</strong> رصيد أول المدة (ج) — اتركه فارغاً أو صفر إذا لم يكن هناك رصيد</div>
+          <div>🔹 <strong style="color:var(--text)">العمود الثالث:</strong> رقم الصفحة / ملاحظات (اختياري)</div>
+          <div style="margin-top:6px;color:var(--text2)">⚠️ الصف الأول (العناوين) يُتجاهل تلقائياً</div>
+        </div>
         <div class="dz" id="dz" onclick="document.getElementById('fi').click()" ondragover="dzOver(event)" ondragleave="dzLeave(event)" ondrop="dzDrop(event)">
           <div class="dz-icon">📂</div>
           <p>اضغط لاختيار ملف أو اسحبه هنا</p>
@@ -640,8 +646,10 @@ select option { background: var(--surface2); }
             <span id="imp-count" style="font-size:12px; color:var(--text2)"></span>
           </div>
           <div style="overflow-x:auto; margin-bottom:14px; max-height:260px; overflow-y:auto">
-            <table class="ptable"><thead><tr><th>#</th><th>الاسم</th><th>رصيد أول المدة</th></tr></thead>
-            <tbody id="imp-body"></tbody></table>
+            <table class="ptable">
+              <thead><tr><th>#</th><th>الاسم</th><th>رصيد أول المدة</th><th>📒 رقم الصفحة</th></tr></thead>
+              <tbody id="imp-body"></tbody>
+            </table>
           </div>
           <div style="display:flex; gap:8px">
             <button class="btn btn-accent" onclick="confirmImport()">✅ استيراد الكل</button>
@@ -846,6 +854,41 @@ select option { background: var(--surface2); }
     <div style="display:flex; gap:8px">
       <button class="btn btn-red" onclick="confirmDeleteUser()">🗑 تأكيد الحذف</button>
       <button class="btn btn-ghost" onclick="closeModal('modal-del-user')">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: تعديل بيانات عميل ===== -->
+<div class="overlay" id="modal-edit-cust">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-hdr">
+      <div class="modal-title">✏️ تعديل بيانات العميل</div>
+      <button class="modal-close" onclick="closeModal('modal-edit-cust')">✕</button>
+    </div>
+    <div class="frow">
+      <div class="fg">
+        <label>الاسم *</label>
+        <input type="text" id="edit-cust-name" placeholder="اسم العميل">
+      </div>
+      <div class="fg">
+        <label>التليفون</label>
+        <input type="tel" id="edit-cust-phone" placeholder="01012345678">
+      </div>
+    </div>
+    <div class="frow">
+      <div class="fg">
+        <label>الحد الأقصى للدين (ج)</label>
+        <input type="number" id="edit-cust-limit" placeholder="بدون حد" min="0" step="0.01">
+      </div>
+      <div class="fg">
+        <label>📒 رقم الصفحة / ملاحظات</label>
+        <input type="text" id="edit-cust-notes" placeholder="مثال: صفحة 12">
+      </div>
+    </div>
+    <div id="edit-cust-err" style="display:none;background:rgba(231,76,60,0.1);border:1px solid var(--red);border-radius:8px;padding:8px 12px;font-size:13px;color:var(--red);margin-bottom:12px"></div>
+    <div style="display:flex;gap:8px;margin-top:6px">
+      <button class="btn btn-accent" onclick="confirmEditCust()">💾 حفظ التعديلات</button>
+      <button class="btn btn-ghost" onclick="closeModal('modal-edit-cust')">إلغاء</button>
     </div>
   </div>
 </div>
@@ -1276,6 +1319,7 @@ async function openCustModal(id) {
       <div style="display:flex; gap:7px; margin-bottom:16px; flex-wrap:wrap">
         <button class="btn btn-blue btn-sm" onclick="printStatement('${id}')">🖨️ كشف حساب</button>
         ${c.phone ? `<button class="btn btn-green btn-sm" onclick="sendWhatsapp('${id}')">📱 WhatsApp</button>` : ''}
+        <button class="btn btn-ghost btn-sm" onclick="openEditCust('${id}')">✏️ تعديل البيانات</button>
         ${isAdmin ? `<button class="btn btn-ghost btn-sm" onclick="archiveCustomer('${id}', ${c.archived})">${archIcon} ${archLabel}</button>` : ''}
       </div>
       <div style="font-size:12px; font-weight:700; color:var(--text2); margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px">سجل المعاملات (${txs.filter(t=>!t.deleted).length})</div>
@@ -1296,6 +1340,54 @@ async function openCustModal(id) {
     `;
   } catch(e) {
     document.getElementById('mc-body').innerHTML = '<p style="color:var(--red)">حدث خطأ</p>';
+  }
+}
+
+// ============================================================
+// EDIT CUSTOMER
+// ============================================================
+let editCustId = null;
+
+function openEditCust(id) {
+  const c = customers.find(x => x.id === id);
+  if (!c) return;
+  editCustId = id;
+  document.getElementById('edit-cust-name').value = c.name || '';
+  document.getElementById('edit-cust-phone').value = c.phone || '';
+  document.getElementById('edit-cust-limit').value = c.debtLimit || '';
+  document.getElementById('edit-cust-notes').value = c.notes || '';
+  document.getElementById('edit-cust-err').style.display = 'none';
+  document.getElementById('modal-edit-cust').classList.add('open');
+}
+
+async function confirmEditCust() {
+  const name = document.getElementById('edit-cust-name').value.trim();
+  const phone = document.getElementById('edit-cust-phone').value.trim();
+  const limit = parseFloat(document.getElementById('edit-cust-limit').value) || null;
+  const notes = document.getElementById('edit-cust-notes').value.trim();
+  const errEl = document.getElementById('edit-cust-err');
+  errEl.style.display = 'none';
+
+  if (!name) {
+    errEl.textContent = 'الاسم مطلوب';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  try {
+    const { doc, updateDoc } = F();
+    await updateDoc(doc(D(), 'customers', editCustId), {
+      name, phone, debtLimit: limit, notes
+    });
+    await logActivity('edit', `عدّل بيانات العميل: ${name}`);
+    toast(`تم تعديل بيانات ${name} ✅`, 'ok');
+    closeModal('modal-edit-cust');
+    await loadCustomers();
+    openCustModal(editCustId);
+  } catch(e) {
+    errEl.textContent = 'حدث خطأ أثناء الحفظ';
+    errEl.style.display = 'block';
+    console.error(e);
   }
 }
 
@@ -1643,13 +1735,22 @@ function processExcel(file) {
       const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
       importData = rows.slice(1)
         .filter(r => r[0] && String(r[0]).trim())
-        .map(r => ({ name: String(r[0]).trim(), opening: parseFloat(r[1]) || 0 }));
+        .map(r => ({
+          name: String(r[0]).trim(),
+          opening: parseFloat(r[1]) || 0,
+          notes: r[2] ? String(r[2]).trim() : ''
+        }));
 
       if (!importData.length) return toast('الملف لا يحتوي بيانات', 'err');
 
       document.getElementById('imp-count').textContent = importData.length + ' عميل';
       document.getElementById('imp-body').innerHTML = importData.map((r, i) =>
-        `<tr><td>${i+1}</td><td>${r.name}</td><td style="color:var(--accent);font-weight:700">${fmt(r.opening)} ج</td></tr>`
+        `<tr>
+          <td>${i+1}</td>
+          <td>${r.name}</td>
+          <td style="color:var(--accent);font-weight:700">${fmt(r.opening)} ج</td>
+          <td style="color:var(--text2);font-size:12px">${r.notes || '—'}</td>
+        </tr>`
       ).join('');
       document.getElementById('import-preview').style.display = 'block';
     } catch(err) { toast('خطأ في قراءة الملف', 'err'); }
@@ -1665,14 +1766,24 @@ async function confirmImport() {
 
   for (const row of importData) {
     try {
-      await addDoc(collection(D(), 'customers'), {
+      const custRef = await addDoc(collection(D(), 'customers'), {
         name: row.name, phone: '',
         openingBalance: row.opening, totalDebt: row.opening,
         debtLimit: null, archived: false, lastPaymentDate: null,
+        notes: row.notes || '',
         createdBy: currentUser.id,
         createdByName: currentUser.displayName || currentUser.username,
         createdAt: serverTimestamp()
       });
+      // إضافة معاملة رصيد أول المدة إذا كان هناك رصيد
+      if (row.opening > 0) {
+        await addDoc(collection(D(), 'transactions'), {
+          customerId: custRef.id, type: 'opening', amount: row.opening,
+          note: 'رصيد أول المدة', date: new Date().toISOString().split('T')[0],
+          createdBy: currentUser.id, createdByName: currentUser.displayName || currentUser.username,
+          deleted: false, createdAt: serverTimestamp()
+        });
+      }
       count++;
     } catch(e) { console.error(e); }
   }
@@ -1983,7 +2094,7 @@ function toast(msg, type = 'ok') {
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
 // Close modals on overlay click
-['modal-cust', 'modal-del-tx', 'modal-archive', 'modal-logout', 'modal-del-user'].forEach(id => {
+['modal-cust', 'modal-del-tx', 'modal-archive', 'modal-logout', 'modal-del-user', 'modal-edit-cust'].forEach(id => {
   document.getElementById(id).addEventListener('click', function(e) {
     if (e.target === this) closeModal(id);
   });
