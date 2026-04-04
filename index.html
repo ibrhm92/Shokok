@@ -1395,8 +1395,8 @@ async function openCustModal(id) {
 
     document.getElementById('mc-body').innerHTML = `
       <div class="sgrid" style="margin-bottom:14px">
-        <div class="scard" style="cursor:pointer" onclick="editOpeningBalance('${id}')">
-          <div class="sl">📌 أول المدة <span style="font-size:10px;color:var(--accent)">✏️ تعديل</span></div>
+        <div class="scard" ${isAdmin ? `style="cursor:pointer" onclick="editOpeningBalance('${id}')"` : ''}>
+          <div class="sl">📌 أول المدة ${isAdmin ? '<span style="font-size:10px;color:var(--accent)">✏️ تعديل</span>' : ''}</div>
           <div class="sv blue">${fmt(c.openingBalance||0)} ج</div>
         </div>
         <div class="scard"><div class="sl">💳 الرصيد الحالي</div><div class="sv ${(c.totalDebt||0)>0?'red':'green'}">${fmt(c.totalDebt||0)} ج</div></div>
@@ -1415,16 +1415,18 @@ async function openCustModal(id) {
 
       <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:14px">
         <div style="font-size:11px;color:var(--text2);font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">📒 رقم الصفحة / ملاحظات الدفتر</div>
+        ${isAdmin ? `
         <div style="display:flex;gap:8px;align-items:center">
           <input type="text" id="modal-notes-inp" value="${(c.notes||'').replace(/"/g,'&quot;')}" placeholder="مثال: صفحة 12 — دفتر 2024"
             style="flex:1;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-family:'Cairo',sans-serif;font-size:13px;outline:none">
           <button class="btn btn-accent btn-sm" onclick="saveNotes('${id}')">💾 حفظ</button>
-        </div>
+        </div>` : `
+        <div style="font-size:14px;font-weight:700;color:var(--accent)">${c.notes || '—'}</div>`}
       </div>
       <div style="display:flex; gap:7px; margin-bottom:16px; flex-wrap:wrap">
         <button class="btn btn-blue btn-sm" onclick="printStatement('${id}')">🖨️ كشف حساب</button>
         ${c.phone ? `<button class="btn btn-green btn-sm" onclick="sendWhatsapp('${id}')">📱 WhatsApp</button>` : ''}
-        <button class="btn btn-ghost btn-sm" onclick="openEditCust('${id}')">✏️ تعديل البيانات</button>
+        ${isAdmin ? `<button class="btn btn-ghost btn-sm" onclick="openEditCust('${id}')">✏️ تعديل البيانات</button>` : ''}
         ${isAdmin ? `<button class="btn btn-ghost btn-sm" onclick="archiveCustomer('${id}', ${c.archived})">${archIcon} ${archLabel}</button>` : ''}
       </div>
       <div style="font-size:12px; font-weight:700; color:var(--text2); margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px">سجل المعاملات (${txs.filter(t=>!t.deleted).length})</div>
