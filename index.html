@@ -9,7 +9,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
   getFirestore, collection, doc, addDoc, updateDoc, deleteDoc,
-  getDocs, getDoc, query, orderBy, where, serverTimestamp, limit
+  getDocs, getDoc, query, orderBy, where, serverTimestamp, limit, startAfter
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 // =============================================
@@ -27,7 +27,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 window.db = db;
-window.fs = { collection, doc, addDoc, updateDoc, deleteDoc, getDocs, getDoc, query, orderBy, where, serverTimestamp, limit };
+window.fs = { collection, doc, addDoc, updateDoc, deleteDoc, getDocs, getDoc, query, orderBy, where, serverTimestamp, limit, startAfter };
 window.dispatchEvent(new Event('firebase-ready'));
 </script>
 
@@ -534,10 +534,9 @@ select option { background: var(--surface2); }
           </div>
         </div>
         <div id="cust-list"><div class="loading"><div class="spin"></div> جاري التحميل...</div></div>
-        <div id="pagination-bar" style="display:none;align-items:center;justify-content:space-between;margin-top:12px;gap:8px;flex-wrap:wrap">
-          <button id="pg-prev" class="btn btn-ghost btn-sm" onclick="pgPrev()">◀ السابق</button>
+        <div id="pagination-bar" style="display:none;flex-direction:column;align-items:center;gap:8px;margin-top:12px">
           <span id="pg-info" style="font-size:12px;color:var(--text2);font-weight:600"></span>
-          <button id="pg-next" class="btn btn-ghost btn-sm" onclick="pgNext()">التالي ▶</button>
+          <button id="load-more-btn" class="btn btn-ghost" style="width:100%;justify-content:center" onclick="loadMoreCustomers()">⬇️ عرض 20 أكثر</button>
         </div>
       </div>
     </div>
@@ -1011,18 +1010,18 @@ select option { background: var(--surface2); }
 // STATE
 // ============================================================
 let currentUser = null;
-let customers = [];
+let customers = [];       // العملاء المحملين حتى الآن
+let lastCustDoc = null;   // آخر document لـ startAfter
+let allCustLoaded = false; // هل تم تحميل الكل
 let importData = [];
 let custTab = 'active';
 let lateDays = 7;
 let pendingDelTx = null;
 let pendingArchive = null;
 let medicinesList = [];
-
-// Pagination
-const PAGE_SIZE = 50;
-let currentPage = 1;
 let filteredList = [];
+
+const PAGE_SIZE = 20;
 
 // ============================================================
 // FIREBASE SHORTCUTS
@@ -1125,17 +1124,43 @@ function goPage(p) {
 }
 
 // ============================================================
-// LOAD CUSTOMERS
+// LOAD CUSTOMERS — lazy loading 20 في كل مرة
 // ============================================================
-async function loadCustomers() {
+async function loadCustomers(reset = true) {
   try {
-    const { collection, getDocs, query, orderBy } = F();
-    const snap = await getDocs(query(collection(D(), 'customers'), orderBy('name')));
-    customers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const { collection, getDocs, query, orderBy, limit, startAfter } = F();
+
+    if (reset) {
+      customers = [];
+      lastCustDoc = null;
+      allCustLoaded = false;
+    }
+
+    let q;
+    if (lastCustDoc) {
+      q = query(collection(D(), 'customers'), orderBy('name'), startAfter(lastCustDoc), limit(PAGE_SIZE));
+    } else {
+      q = query(collection(D(), 'customers'), orderBy('name'), limit(PAGE_SIZE));
+    }
+
+    const snap = await getDocs(q);
+    const newDocs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    if (snap.docs.length < PAGE_SIZE) allCustLoaded = true;
+    if (snap.docs.length > 0) lastCustDoc = snap.docs[snap.docs.length - 1];
+
+    customers = [...customers, ...newDocs];
     renderCustomers();
   } catch(e) {
     document.getElementById('cust-list').innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><p>تأكد من إعدادات Firebase</p></div>`;
   }
+}
+
+async function loadMoreCustomers() {
+  if (allCustLoaded) return;
+  const btn = document.getElementById('load-more-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ جاري التحميل...'; }
+  await loadCustomers(false);
 }
 
 function renderCustomers() {
@@ -1148,19 +1173,14 @@ function renderCustomers() {
   );
 
   const el = document.getElementById('cust-list');
+
   if (!filteredList.length) {
     el.innerHTML = `<div class="empty"><div class="empty-icon">👥</div><p>لا يوجد عملاء</p></div>`;
     document.getElementById('pagination-bar').style.display = 'none';
     return;
   }
 
-  // حساب الصفحات
-  const totalPages = Math.ceil(filteredList.length / PAGE_SIZE);
-  if (currentPage > totalPages) currentPage = 1;
-  const start = (currentPage - 1) * PAGE_SIZE;
-  const pageList = filteredList.slice(start, start + PAGE_SIZE);
-
-  el.innerHTML = pageList.map(c => {
+  el.innerHTML = filteredList.map(c => {
     const debt = c.totalDebt || 0;
     const overLimit = c.debtLimit && debt > c.debtLimit;
     const archived = c.archived;
@@ -1183,28 +1203,24 @@ function renderCustomers() {
     </div>`;
   }).join('');
 
-  // شريط الـ Pagination
+  // زر عرض المزيد
   const bar = document.getElementById('pagination-bar');
-  if (totalPages <= 1) {
-    bar.style.display = 'none';
-  } else {
+  if (!allCustLoaded && !q) {
     bar.style.display = 'flex';
-    document.getElementById('pg-info').textContent = `صفحة ${currentPage} من ${totalPages} · ${filteredList.length} عميل`;
-    document.getElementById('pg-prev').disabled = currentPage === 1;
-    document.getElementById('pg-next').disabled = currentPage === totalPages;
+    document.getElementById('pg-info').textContent = `تم تحميل ${customers.length} عميل`;
+    const btn = document.getElementById('load-more-btn');
+    if (btn) { btn.disabled = false; btn.textContent = '⬇️ عرض 20 أكثر'; }
+  } else {
+    bar.style.display = q ? 'none' : 'flex';
+    document.getElementById('pg-info').textContent = `إجمالي المحمّل: ${customers.length} عميل`;
+    const btn = document.getElementById('load-more-btn');
+    if (btn) { btn.style.display = 'none'; }
   }
 }
 
-function pgPrev() { if (currentPage > 1) { currentPage--; renderCustomers(); } }
-function pgNext() {
-  const totalPages = Math.ceil(filteredList.length / PAGE_SIZE);
-  if (currentPage < totalPages) { currentPage++; renderCustomers(); }
-}
-
-function filterCust() { currentPage = 1; renderCustomers(); }
+function filterCust() { renderCustomers(); }
 function switchTab(t) {
   custTab = t;
-  currentPage = 1;
   document.getElementById('tab-active').className = 'tab' + (t==='active'?' active':'');
   document.getElementById('tab-archived').className = 'tab' + (t==='archived'?' active':'');
   renderCustomers();
@@ -1417,19 +1433,37 @@ function fillCustSelects() {
 
 // ============================================================
 // CUSTOMER SEARCH AUTOCOMPLETE (للصرف والسداد)
+// بيبحث في كل العملاء المحملين + يجيب من Firebase لو محتاج
 // ============================================================
 let custSugTimeout = {};
 function searchCust(type) {
   clearTimeout(custSugTimeout[type]);
-  custSugTimeout[type] = setTimeout(() => {
+  custSugTimeout[type] = setTimeout(async () => {
     const searchEl = document.getElementById(type + '-cust-search');
     const box = document.getElementById(type + '-cust-suggestions');
     const q = (searchEl?.value || '').trim().toLowerCase();
 
-    const list = customers.filter(c => !c.archived);
-    const results = q
+    let list = customers.filter(c => !c.archived);
+    let results = q
       ? list.filter(c => c.name.toLowerCase().includes(q) || (c.phone||'').includes(q))
       : list.slice(0, 10);
+
+    // لو البحث موجود وعدد النتائج قليل — اجيب من Firebase كمان
+    if (q && results.length < 5 && !allCustLoaded) {
+      try {
+        const { collection, getDocs, query, orderBy, limit } = F();
+        const snap = await getDocs(query(collection(D(), 'customers'), orderBy('name'), limit(200)));
+        const allFetched = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        results = allFetched.filter(c =>
+          !c.archived &&
+          (c.name.toLowerCase().includes(q) || (c.phone||'').includes(q))
+        ).slice(0, 10);
+        // دمج مع المحملين بدون تكرار
+        allFetched.forEach(fc => {
+          if (!customers.find(c => c.id === fc.id)) customers.push(fc);
+        });
+      } catch(e) { console.error(e); }
+    }
 
     if (!results.length) { box.style.display = 'none'; return; }
 
@@ -1446,7 +1480,7 @@ function searchCust(type) {
             <div style="width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent2));display:flex;align-items:center;justify-content:center;font-weight:900;font-size:13px;color:#000;flex-shrink:0">${c.name[0]}</div>
             <div>
               <div>${c.name}</div>
-              <div style="font-size:11px;color:var(--text2);font-weight:400">${c.phone||'بدون تليفون'}</div>
+              <div style="font-size:11px;color:var(--text2);font-weight:400">${c.notes||c.phone||'—'}</div>
             </div>
           </div>
           <div style="font-size:13px;font-weight:900;color:${debtColor};white-space:nowrap">${fmt(debt)} ج</div>
@@ -1916,6 +1950,14 @@ async function loadLate() {
   const el = document.getElementById('late-list');
   el.innerHTML = `<div class="loading"><div class="spin"></div></div>`;
 
+  // لو مش كل العملاء محملين — اجيبهم
+  if (!allCustLoaded) {
+    const { collection, getDocs, query, orderBy } = F();
+    const snap = await getDocs(query(collection(D(), 'customers'), orderBy('name')));
+    customers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    allCustLoaded = true;
+  }
+
   const now = new Date();
   const cutoff = new Date(now - lateDays * 24 * 60 * 60 * 1000);
 
@@ -2366,6 +2408,14 @@ async function confirmDeleteUser() {
 let repTab = 'all';
 
 async function loadReport() {
+  // لو مش كل العملاء محملين — اجيبهم كلهم للتقرير
+  if (!allCustLoaded) {
+    const { collection, getDocs, query, orderBy } = F();
+    const snap = await getDocs(query(collection(D(), 'customers'), orderBy('name')));
+    customers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    allCustLoaded = true;
+  }
+
   const active = customers.filter(c => !c.archived);
   const total = active.reduce((s, c) => s + (c.totalDebt || 0), 0);
   const withDebt = active.filter(c => (c.totalDebt || 0) > 0).length;
