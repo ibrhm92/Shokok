@@ -1010,9 +1010,11 @@ select option { background: var(--surface2); }
 // STATE
 // ============================================================
 let currentUser = null;
-let customers = [];       // العملاء المحملين حتى الآن
-let lastCustDoc = null;   // آخر document لـ startAfter
-let allCustLoaded = false; // هل تم تحميل الكل
+let customers = [];
+let lastCustDoc = null;
+let allCustLoaded = false;
+let lastFullFetch = 0;      // وقت آخر جلب كامل للعملاء
+const FULL_FETCH_TTL = 5 * 60 * 1000; // 5 دقائق قبل ما نجيب الكل تاني
 let importData = [];
 let custTab = 'active';
 let lateDays = 7;
@@ -1020,6 +1022,7 @@ let pendingDelTx = null;
 let pendingArchive = null;
 let medicinesList = [];
 let filteredList = [];
+let searchTimeout = null;
 
 const PAGE_SIZE = 20;
 
@@ -1124,6 +1127,42 @@ function goPage(p) {
 }
 
 // ============================================================
+// تحديث عميل واحد في الذاكرة بدون إعادة تحميل الكل
+// ============================================================
+async function refreshCustomer(custId) {
+  try {
+    const { doc, getDoc } = F();
+    const snap = await getDoc(doc(D(), 'customers', custId));
+    if (!snap.exists()) return;
+    const updated = { id: snap.id, ...snap.data() };
+    const idx = customers.findIndex(c => c.id === custId);
+    if (idx !== -1) customers[idx] = updated;
+    else customers.push(updated);
+    renderCustomers();
+  } catch(e) { console.error(e); }
+}
+
+// إضافة عميل جديد للذاكرة
+function addCustomerToList(custData) {
+  customers.push(custData);
+  customers.sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+  renderCustomers();
+}
+
+// جلب كل العملاء (مع cache بـ 5 دقائق)
+async function fetchAllCustomers() {
+  const now = Date.now();
+  if (allCustLoaded && (now - lastFullFetch) < FULL_FETCH_TTL) return; // كاش لسه صالح
+
+  const { collection, getDocs, query, orderBy } = F();
+  const snap = await getDocs(query(collection(D(), 'customers'), orderBy('name')));
+  customers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  allCustLoaded = true;
+  lastFullFetch = now;
+  lastCustDoc = snap.docs.length ? snap.docs[snap.docs.length - 1] : null;
+}
+
+// ============================================================
 // LOAD CUSTOMERS — lazy loading 20 في كل مرة
 // ============================================================
 async function loadCustomers(reset = true) {
@@ -1146,7 +1185,7 @@ async function loadCustomers(reset = true) {
     const snap = await getDocs(q);
     const newDocs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-    if (snap.docs.length < PAGE_SIZE) allCustLoaded = true;
+    if (snap.docs.length < PAGE_SIZE) { allCustLoaded = true; lastFullFetch = Date.now(); }
     if (snap.docs.length > 0) lastCustDoc = snap.docs[snap.docs.length - 1];
 
     customers = [...customers, ...newDocs];
@@ -1205,20 +1244,84 @@ function renderCustomers() {
 
   // زر عرض المزيد
   const bar = document.getElementById('pagination-bar');
-  if (!allCustLoaded && !q) {
+  const btn = document.getElementById('load-more-btn');
+  if (!allCustLoaded) {
     bar.style.display = 'flex';
     document.getElementById('pg-info').textContent = `تم تحميل ${customers.length} عميل`;
-    const btn = document.getElementById('load-more-btn');
-    if (btn) { btn.disabled = false; btn.textContent = '⬇️ عرض 20 أكثر'; }
+    if (btn) { btn.style.display = ''; btn.disabled = false; btn.textContent = '⬇️ عرض 20 أكثر'; }
   } else {
-    bar.style.display = q ? 'none' : 'flex';
+    bar.style.display = 'flex';
     document.getElementById('pg-info').textContent = `إجمالي المحمّل: ${customers.length} عميل`;
-    const btn = document.getElementById('load-more-btn');
-    if (btn) { btn.style.display = 'none'; }
+    if (btn) btn.style.display = 'none';
   }
 }
 
-function filterCust() { renderCustomers(); }
+function filterCust() {
+  clearTimeout(searchTimeout);
+  const q = document.getElementById('search-inp').value.trim();
+
+  if (!q) {
+    // مسح البحث — ارجع للقائمة العادية مع إظهار زر عرض المزيد
+    renderCustomers();
+    return;
+  }
+
+  searchTimeout = setTimeout(async () => {
+    const el = document.getElementById('cust-list');
+    el.innerHTML = `<div class="loading"><div class="spin"></div> جاري البحث...</div>`;
+    const bar = document.getElementById('pagination-bar');
+    bar.style.display = 'none';
+
+    try {
+      // جلب كل العملاء للبحث الكامل (مع cache)
+      await fetchAllCustomers();
+
+      const qLower = q.toLowerCase();
+      const results = customers.filter(c =>
+        c.archived === (custTab === 'archived') &&
+        (c.name.toLowerCase().includes(qLower) ||
+         (c.phone||'').includes(qLower) ||
+         (c.notes||'').toLowerCase().includes(qLower))
+      );
+
+      if (!results.length) {
+        el.innerHTML = `<div class="empty"><div class="empty-icon">🔍</div><p>لا توجد نتائج للبحث عن "${q}"</p></div>`;
+        return;
+      }
+
+      el.innerHTML = results.map(c => {
+        const debt = c.totalDebt || 0;
+        const overLimit = c.debtLimit && debt > c.debtLimit;
+        return `
+        <div class="ci" onclick="openCustModal('${c.id}')">
+          <div class="ci-left">
+            <div class="ci-avatar">${c.name[0]}</div>
+            <div>
+              <div class="ci-name">${c.name}</div>
+              <div class="ci-sub">${c.notes || '—'}${c.debtLimit ? ' · حد: ' + fmt(c.debtLimit) + ' ج' : ''}</div>
+            </div>
+          </div>
+          <div class="ci-right">
+            ${overLimit ? `<span class="limit-badge">⚠️ تجاوز الحد</span>` : ''}
+            <div class="ci-debt">
+              <div class="debt-val ${debt==0?'zero':overLimit?'over-limit':''}">${fmt(debt)} ج</div>
+              <div class="debt-lbl">الرصيد</div>
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+
+      bar.style.display = 'flex';
+      document.getElementById('pg-info').textContent = `${results.length} نتيجة`;
+      const btn = document.getElementById('load-more-btn');
+      if (btn) btn.style.display = 'none';
+
+    } catch(e) {
+      el.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><p>حدث خطأ في البحث</p></div>`;
+    }
+  }, 300);
+}
+
 function switchTab(t) {
   custTab = t;
   document.getElementById('tab-active').className = 'tab' + (t==='active'?' active':'');
@@ -1269,7 +1372,13 @@ async function addCustomer() {
     document.getElementById('nc-opening').value = '';
     document.getElementById('nc-limit').value = '';
     document.getElementById('nc-notes').value = '';
-    await loadCustomers();
+    // أضيف العميل للقائمة مباشرة بدون إعادة تحميل
+    addCustomerToList({
+      id: ref.id, name, phone,
+      openingBalance: opening, totalDebt: opening,
+      debtLimit: limit || null, notes: notes || '',
+      archived: false, lastPaymentDate: null
+    });
     goPage('customers');
   } catch(e) { toast('حدث خطأ', 'err'); console.error(e); }
 }
@@ -1369,13 +1478,9 @@ async function addPurchase() {
     document.getElementById('pur-debt').value = fmt(newDebt) + ' ج';
     document.getElementById('pur-cust-search').value = '';
     document.getElementById('pur-cust').value = '';
-    await loadCustomers();
+    await refreshCustomer(custId);
   } catch(e) { toast('حدث خطأ', 'err'); console.error(e); }
 }
-
-// ============================================================
-// PAYMENT
-// ============================================================
 async function addPayment() {
   const custId = document.getElementById('pay-cust').value;
   const amount = parseFloat(document.getElementById('pay-amt').value);
@@ -1408,11 +1513,9 @@ async function addPayment() {
     document.getElementById('pay-debt').value = fmt(newDebt) + ' ج';
     document.getElementById('pay-cust-search').value = '';
     document.getElementById('pay-cust').value = '';
-    await loadCustomers();
+    await refreshCustomer(custId);
   } catch(e) { toast('حدث خطأ', 'err'); console.error(e); }
 }
-
-function showCustInfo(type) {
   const id = document.getElementById(type + '-cust').value;
   const c = customers.find(x => x.id === id);
   const v = c ? fmt(c.totalDebt || 0) + ' ج' : '';
@@ -1451,17 +1554,11 @@ function searchCust(type) {
     // لو البحث موجود وعدد النتائج قليل — اجيب من Firebase كمان
     if (q && results.length < 5 && !allCustLoaded) {
       try {
-        const { collection, getDocs, query, orderBy, limit } = F();
-        const snap = await getDocs(query(collection(D(), 'customers'), orderBy('name'), limit(200)));
-        const allFetched = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        results = allFetched.filter(c =>
+        await fetchAllCustomers();
+        results = customers.filter(c =>
           !c.archived &&
           (c.name.toLowerCase().includes(q) || (c.phone||'').includes(q))
         ).slice(0, 10);
-        // دمج مع المحملين بدون تكرار
-        allFetched.forEach(fc => {
-          if (!customers.find(c => c.id === fc.id)) customers.push(fc);
-        });
       } catch(e) { console.error(e); }
     }
 
@@ -1642,7 +1739,7 @@ async function confirmEditOpening(custId, newOpening, oldOpening) {
     });
     await logActivity('edit', `عدّل رصيد أول المدة للعميل ${c.name}: ${fmt(oldOpening)} ← ${fmt(newOpening)} ج`);
     toast(`تم تعديل رصيد أول المدة إلى ${fmt(newOpening)} ج ✅`, 'ok');
-    await loadCustomers();
+    await refreshCustomer(custId);
     openCustModal(custId);
   } catch(e) { toast('حدث خطأ', 'err'); console.error(e); }
 }
@@ -1709,8 +1806,10 @@ async function confirmDeleteCust() {
 
     closeModal('modal-del-cust');
     closeModal('modal-cust');
+    const delId = deleteCustId;
     deleteCustId = null;
-    await loadCustomers();
+    customers = customers.filter(x => x.id !== delId);
+    renderCustomers();
   } catch(e) {
     errEl.textContent = 'حدث خطأ أثناء الحذف';
     errEl.style.display = 'block';
@@ -1757,7 +1856,7 @@ async function confirmEditCust() {
     await logActivity('edit', `عدّل بيانات العميل: ${name}`);
     toast(`تم تعديل بيانات ${name} ✅`, 'ok');
     closeModal('modal-edit-cust');
-    await loadCustomers();
+    await refreshCustomer(editCustId);
     openCustModal(editCustId);
   } catch(e) {
     errEl.textContent = 'حدث خطأ أثناء الحفظ';
@@ -1802,7 +1901,7 @@ async function confirmDeleteTx() {
 
     closeModal('modal-del-tx');
     toast('تم حذف المعاملة ✅', 'ok');
-    await loadCustomers();
+    await refreshCustomer(delTxData.custId);
     openCustModal(delTxData.custId);
   } catch(e) { toast('حدث خطأ', 'err'); console.error(e); }
 }
@@ -1828,11 +1927,12 @@ async function confirmArchive() {
     const newArchived = !pendingArchive.isArchived;
     await updateDoc(doc(D(), 'customers', pendingArchive.id), { archived: newArchived });
     const c = customers.find(x => x.id === pendingArchive.id);
+    if (c) c.archived = newArchived;
     await logActivity('archive', `${newArchived?'أرشف':'استعاد'} العميل: ${c.name}`);
     toast(newArchived ? 'تم الأرشفة ✅' : 'تم الاستعادة ✅', 'ok');
     closeModal('modal-archive');
     closeModal('modal-cust');
-    await loadCustomers();
+    renderCustomers();
   } catch(e) { toast('حدث خطأ', 'err'); }
 }
 
@@ -1950,13 +2050,9 @@ async function loadLate() {
   const el = document.getElementById('late-list');
   el.innerHTML = `<div class="loading"><div class="spin"></div></div>`;
 
-  // لو مش كل العملاء محملين — اجيبهم
-  if (!allCustLoaded) {
-    const { collection, getDocs, query, orderBy } = F();
-    const snap = await getDocs(query(collection(D(), 'customers'), orderBy('name')));
-    customers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    allCustLoaded = true;
-  }
+  try {
+    await fetchAllCustomers();
+  } catch(e) { console.error(e); }
 
   const now = new Date();
   const cutoff = new Date(now - lateDays * 24 * 60 * 60 * 1000);
@@ -2183,7 +2279,8 @@ async function confirmImport() {
   await logActivity('import', `استيراد ${count} عميل من Excel`);
   toast(`تم استيراد ${count} من ${total} عميل ✅`, 'ok');
   cancelImport();
-  await loadCustomers();
+  // بعد الاستيراد نعيد التحميل من الأول عشان تظهر العملاء الجدد
+  await loadCustomers(true);
   goPage('customers');
 }
 
@@ -2408,13 +2505,9 @@ async function confirmDeleteUser() {
 let repTab = 'all';
 
 async function loadReport() {
-  // لو مش كل العملاء محملين — اجيبهم كلهم للتقرير
-  if (!allCustLoaded) {
-    const { collection, getDocs, query, orderBy } = F();
-    const snap = await getDocs(query(collection(D(), 'customers'), orderBy('name')));
-    customers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    allCustLoaded = true;
-  }
+  try {
+    await fetchAllCustomers();
+  } catch(e) { console.error(e); }
 
   const active = customers.filter(c => !c.archived);
   const total = active.reduce((s, c) => s + (c.totalDebt || 0), 0);
