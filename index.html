@@ -1372,14 +1372,16 @@ async function addCustomer() {
     document.getElementById('nc-opening').value = '';
     document.getElementById('nc-limit').value = '';
     document.getElementById('nc-notes').value = '';
-    // أضيف العميل للقائمة مباشرة بدون إعادة تحميل
-    addCustomerToList({
+    const newCust = {
       id: ref.id, name, phone,
       openingBalance: opening, totalDebt: opening,
       debtLimit: limit || null, notes: notes || '',
       archived: false, lastPaymentDate: null
-    });
+    };
+    addCustomerToList(newCust);
     goPage('customers');
+    // فتح موديل العميل مباشرة لإتاحة صرف الأدوية
+    setTimeout(() => openCustModal(ref.id), 200);
   } catch(e) { toast('حدث خطأ', 'err'); console.error(e); }
 }
 
