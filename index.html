@@ -534,6 +534,11 @@ select option { background: var(--surface2); }
           </div>
         </div>
         <div id="cust-list"><div class="loading"><div class="spin"></div> جاري التحميل...</div></div>
+        <div id="pagination-bar" style="display:none;align-items:center;justify-content:space-between;margin-top:12px;gap:8px;flex-wrap:wrap">
+          <button id="pg-prev" class="btn btn-ghost btn-sm" onclick="pgPrev()">◀ السابق</button>
+          <span id="pg-info" style="font-size:12px;color:var(--text2);font-weight:600"></span>
+          <button id="pg-next" class="btn btn-ghost btn-sm" onclick="pgNext()">التالي ▶</button>
+        </div>
       </div>
     </div>
 
@@ -899,6 +904,44 @@ select option { background: var(--surface2); }
   </div>
 </div>
 
+<!-- ===== MODAL: تعديل بيانات مستخدم ===== -->
+<div class="overlay" id="modal-edit-user">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-hdr">
+      <div class="modal-title">✏️ تعديل بيانات المستخدم</div>
+      <button class="modal-close" onclick="closeModal('modal-edit-user')">✕</button>
+    </div>
+    <div class="frow">
+      <div class="fg">
+        <label>اسم المستخدم *</label>
+        <input type="text" id="eu-username" placeholder="ahmed123">
+      </div>
+      <div class="fg">
+        <label>الاسم الظاهر *</label>
+        <input type="text" id="eu-display" placeholder="أحمد محمد">
+      </div>
+    </div>
+    <div class="frow">
+      <div class="fg">
+        <label>كلمة المرور الجديدة</label>
+        <input type="text" id="eu-pass" placeholder="اتركه فارغاً للإبقاء على القديمة">
+      </div>
+      <div class="fg">
+        <label>الصلاحية</label>
+        <select id="eu-role">
+          <option value="user">مستخدم عادي</option>
+          <option value="admin">أدمن</option>
+        </select>
+      </div>
+    </div>
+    <div id="eu-err" style="display:none;background:rgba(231,76,60,0.1);border:1px solid var(--red);border-radius:8px;padding:8px 12px;font-size:13px;color:var(--red);margin-bottom:12px"></div>
+    <div style="display:flex;gap:8px;margin-top:6px">
+      <button class="btn btn-accent" onclick="confirmEditUser()">💾 حفظ التعديلات</button>
+      <button class="btn btn-ghost" onclick="closeModal('modal-edit-user')">إلغاء</button>
+    </div>
+  </div>
+</div>
+
 <!-- ===== MODAL: تعديل بيانات عميل ===== -->
 <div class="overlay" id="modal-edit-cust">
   <div class="modal" style="max-width:480px">
@@ -951,7 +994,12 @@ let custTab = 'active';
 let lateDays = 7;
 let pendingDelTx = null;
 let pendingArchive = null;
-let medicinesList = []; // قائمة الأدوية المحفوظة
+let medicinesList = [];
+
+// Pagination
+const PAGE_SIZE = 50;
+let currentPage = 1;
+let filteredList = [];
 
 // ============================================================
 // FIREBASE SHORTCUTS
@@ -1069,16 +1117,27 @@ async function loadCustomers() {
 
 function renderCustomers() {
   const q = document.getElementById('search-inp').value.toLowerCase();
-  let list = customers.filter(c => c.archived === (custTab === 'archived'));
-  if (q) list = list.filter(c => c.name.toLowerCase().includes(q) || (c.phone||'').includes(q));
+  filteredList = customers.filter(c => c.archived === (custTab === 'archived'));
+  if (q) filteredList = filteredList.filter(c =>
+    c.name.toLowerCase().includes(q) ||
+    (c.phone||'').includes(q) ||
+    (c.notes||'').toLowerCase().includes(q)
+  );
 
   const el = document.getElementById('cust-list');
-  if (!list.length) {
+  if (!filteredList.length) {
     el.innerHTML = `<div class="empty"><div class="empty-icon">👥</div><p>لا يوجد عملاء</p></div>`;
+    document.getElementById('pagination-bar').style.display = 'none';
     return;
   }
 
-  el.innerHTML = list.map(c => {
+  // حساب الصفحات
+  const totalPages = Math.ceil(filteredList.length / PAGE_SIZE);
+  if (currentPage > totalPages) currentPage = 1;
+  const start = (currentPage - 1) * PAGE_SIZE;
+  const pageList = filteredList.slice(start, start + PAGE_SIZE);
+
+  el.innerHTML = pageList.map(c => {
     const debt = c.totalDebt || 0;
     const overLimit = c.debtLimit && debt > c.debtLimit;
     const archived = c.archived;
@@ -1100,11 +1159,29 @@ function renderCustomers() {
       </div>
     </div>`;
   }).join('');
+
+  // شريط الـ Pagination
+  const bar = document.getElementById('pagination-bar');
+  if (totalPages <= 1) {
+    bar.style.display = 'none';
+  } else {
+    bar.style.display = 'flex';
+    document.getElementById('pg-info').textContent = `صفحة ${currentPage} من ${totalPages} · ${filteredList.length} عميل`;
+    document.getElementById('pg-prev').disabled = currentPage === 1;
+    document.getElementById('pg-next').disabled = currentPage === totalPages;
+  }
 }
 
-function filterCust() { renderCustomers(); }
+function pgPrev() { if (currentPage > 1) { currentPage--; renderCustomers(); } }
+function pgNext() {
+  const totalPages = Math.ceil(filteredList.length / PAGE_SIZE);
+  if (currentPage < totalPages) { currentPage++; renderCustomers(); }
+}
+
+function filterCust() { currentPage = 1; renderCustomers(); }
 function switchTab(t) {
   custTab = t;
+  currentPage = 1;
   document.getElementById('tab-active').className = 'tab' + (t==='active'?' active':'');
   document.getElementById('tab-archived').className = 'tab' + (t==='archived'?' active':'');
   renderCustomers();
@@ -1930,7 +2007,10 @@ async function confirmImport() {
   if (!importData.length) return;
   const { collection, addDoc, serverTimestamp } = F();
   let count = 0;
-  toast('جاري الاستيراد...', 'info');
+  const total = importData.length;
+  const delay = ms => new Promise(res => setTimeout(res, ms));
+
+  toast(`جاري الاستيراد... 0 / ${total}`, 'info');
 
   for (const row of importData) {
     try {
@@ -1953,11 +2033,17 @@ async function confirmImport() {
         });
       }
       count++;
+      // تحديث التقدم كل 10 عملاء
+      if (count % 10 === 0) {
+        toast(`جاري الاستيراد... ${count} / ${total}`, 'info');
+      }
+      // تأخير 60ms بين كل عميل وعميل لتجنب تجاوز حدود Firebase
+      await delay(60);
     } catch(e) { console.error(e); }
   }
 
   await logActivity('import', `استيراد ${count} عميل من Excel`);
-  toast(`تم استيراد ${count} عميل ✅`, 'ok');
+  toast(`تم استيراد ${count} من ${total} عميل ✅`, 'ok');
   cancelImport();
   await loadCustomers();
   goPage('customers');
@@ -2033,10 +2119,75 @@ async function loadUsers() {
         <div>
           <div class="user-name">${u.displayName || u.username}</div>
           <div class="user-sub">@${u.username} · <span class="role-badge ${u.role}" style="font-size:11px;padding:1px 6px">${u.role === 'admin' ? 'أدمن' : 'مستخدم'}</span></div>
+          <div class="user-sub" style="margin-top:3px;color:var(--text2);font-size:11px">🔑 كلمة السر: <span style="color:var(--text);font-weight:700">${u.password || '—'}</span></div>
         </div>
-        ${u.id !== currentUser.id ? `<button class="btn btn-red btn-sm" onclick="deleteUser('${u.id}','${u.displayName||u.username}')">🗑 حذف</button>` : '<span style="font-size:11px;color:var(--text2)">أنت</span>'}
+        <div style="display:flex;gap:6px;align-items:center">
+          <button class="btn btn-ghost btn-sm" onclick="openEditUser('${u.id}')">✏️ تعديل</button>
+          ${u.id !== currentUser.id ? `<button class="btn btn-red btn-sm" onclick="deleteUser('${u.id}','${u.displayName||u.username}')">🗑</button>` : '<span style="font-size:11px;color:var(--text2)">أنت</span>'}
+        </div>
       </div>`).join('');
   } catch(e) { el.innerHTML = '<p style="color:var(--red)">حدث خطأ</p>'; }
+}
+
+let editUserId = null;
+let editUserOldPass = null;
+
+function openEditUser(id) {
+  // جيب بيانات المستخدم من القائمة المحملة
+  const el = document.getElementById('users-list');
+  // نجيب البيانات من Firebase مباشرة
+  const { doc, getDoc } = F();
+  getDoc(doc(D(), 'users', id)).then(snap => {
+    if (!snap.exists()) return toast('مش لاقي المستخدم', 'err');
+    const u = { id: snap.id, ...snap.data() };
+    editUserId = id;
+    editUserOldPass = u.password;
+    document.getElementById('eu-username').value = u.username || '';
+    document.getElementById('eu-display').value = u.displayName || '';
+    document.getElementById('eu-pass').value = '';
+    document.getElementById('eu-role').value = u.role || 'user';
+    document.getElementById('eu-err').style.display = 'none';
+    document.getElementById('modal-edit-user').classList.add('open');
+  }).catch(() => toast('حدث خطأ', 'err'));
+}
+
+async function confirmEditUser() {
+  const username = document.getElementById('eu-username').value.trim();
+  const display  = document.getElementById('eu-display').value.trim();
+  const newPass  = document.getElementById('eu-pass').value.trim();
+  const role     = document.getElementById('eu-role').value;
+  const errEl    = document.getElementById('eu-err');
+  errEl.style.display = 'none';
+
+  if (!username || !display) {
+    errEl.textContent = 'اسم المستخدم والاسم الظاهر مطلوبان';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  try {
+    const { doc, updateDoc } = F();
+    const updates = { username, displayName: display, role };
+    if (newPass) updates.password = newPass;
+
+    await updateDoc(doc(D(), 'users', editUserId), updates);
+    await logActivity('edit', `عدّل بيانات المستخدم: ${display} (@${username})`);
+
+    // لو عدّل بيانات نفسه — حدّث الـ localStorage
+    if (editUserId === currentUser.id) {
+      currentUser = { ...currentUser, username, displayName: display, role, ...(newPass ? { password: newPass } : {}) };
+      localStorage.setItem('shokok_user', JSON.stringify(currentUser));
+      document.getElementById('disp-name').textContent = display;
+    }
+
+    toast(`تم تعديل بيانات ${display} ✅`, 'ok');
+    closeModal('modal-edit-user');
+    loadUsers();
+  } catch(e) {
+    errEl.textContent = 'حدث خطأ أثناء الحفظ';
+    errEl.style.display = 'block';
+    console.error(e);
+  }
 }
 
 async function addUser() {
@@ -2291,7 +2442,7 @@ function toast(msg, type = 'ok') {
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
 // Close modals on overlay click
-['modal-cust', 'modal-del-tx', 'modal-archive', 'modal-logout', 'modal-del-user', 'modal-edit-cust', 'modal-purchase-done'].forEach(id => {
+['modal-cust', 'modal-del-tx', 'modal-archive', 'modal-logout', 'modal-del-user', 'modal-edit-cust', 'modal-purchase-done', 'modal-edit-user'].forEach(id => {
   document.getElementById(id).addEventListener('click', function(e) {
     if (e.target === this) closeModal(id);
   });
