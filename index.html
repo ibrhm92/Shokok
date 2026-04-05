@@ -904,6 +904,29 @@ select option { background: var(--surface2); }
   </div>
 </div>
 
+<!-- ===== MODAL: حذف عميل ===== -->
+<div class="overlay" id="modal-del-cust">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-hdr">
+      <div class="modal-title">🗑 حذف عميل</div>
+      <button class="modal-close" onclick="closeModal('modal-del-cust')">✕</button>
+    </div>
+    <div style="background:rgba(231,76,60,0.08);border:1px solid var(--red);border-radius:10px;padding:12px 14px;margin-bottom:14px">
+      <div style="font-weight:700;color:var(--red);margin-bottom:6px;font-size:14px">⚠️ تحذير — هذا الإجراء لا يمكن التراجع عنه</div>
+      <div id="del-cust-msg" style="font-size:13px;color:var(--text2)"></div>
+    </div>
+    <div class="fg" style="margin-bottom:14px">
+      <label>كلمة سر الأدمن للتأكيد *</label>
+      <input type="password" id="del-cust-pass" placeholder="••••••" autocomplete="off">
+    </div>
+    <div id="del-cust-err" style="display:none;background:rgba(231,76,60,0.1);border:1px solid var(--red);border-radius:8px;padding:8px 12px;font-size:13px;color:var(--red);margin-bottom:12px"></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-red" onclick="confirmDeleteCust()">🗑 تأكيد الحذف النهائي</button>
+      <button class="btn btn-ghost" onclick="closeModal('modal-del-cust')">إلغاء</button>
+    </div>
+  </div>
+</div>
+
 <!-- ===== MODAL: تعديل بيانات مستخدم ===== -->
 <div class="overlay" id="modal-edit-user">
   <div class="modal" style="max-width:440px">
@@ -1295,7 +1318,8 @@ async function addPurchase() {
   const newDebt = (cust.totalDebt || 0) + amount;
 
   if (cust.debtLimit && newDebt > cust.debtLimit) {
-    if (!confirm(`⚠️ هذا المبلغ سيتجاوز الحد الأقصى للدين (${fmt(cust.debtLimit)} ج)\nهل تريد المتابعة؟`)) return;
+    const remaining = cust.debtLimit - (cust.totalDebt || 0);
+    return toast(`🚫 تجاوز الحد الأقصى! المتبقي المسموح: ${fmt(remaining > 0 ? remaining : 0)} ج فقط`, 'err');
   }
 
   try {
@@ -1505,6 +1529,7 @@ async function openCustModal(id) {
         ${c.phone ? `<button class="btn btn-green btn-sm" onclick="sendWhatsapp('${id}')">📱 WhatsApp</button>` : ''}
         ${isAdmin ? `<button class="btn btn-ghost btn-sm" onclick="openEditCust('${id}')">✏️ تعديل البيانات</button>` : ''}
         ${isAdmin ? `<button class="btn btn-ghost btn-sm" onclick="archiveCustomer('${id}', ${c.archived})">${archIcon} ${archLabel}</button>` : ''}
+        ${isAdmin ? `<button class="btn btn-red btn-sm" onclick="openDeleteCust('${id}')">🗑 حذف العميل</button>` : ''}
       </div>
       <div style="font-size:12px; font-weight:700; color:var(--text2); margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px">سجل المعاملات (${txs.filter(t=>!t.deleted).length})</div>
       ${txs.length ? txs.map(tx => `
@@ -1586,6 +1611,77 @@ async function confirmEditOpening(custId, newOpening, oldOpening) {
     await loadCustomers();
     openCustModal(custId);
   } catch(e) { toast('حدث خطأ', 'err'); console.error(e); }
+}
+
+// ============================================================
+// حذف عميل بمعاملاته
+// ============================================================
+let deleteCustId = null;
+
+function openDeleteCust(id) {
+  const c = customers.find(x => x.id === id);
+  if (!c) return;
+  deleteCustId = id;
+  document.getElementById('del-cust-msg').textContent =
+    `سيتم حذف العميل "${c.name}" وكل معاملاته نهائياً من قاعدة البيانات.`;
+  document.getElementById('del-cust-pass').value = '';
+  document.getElementById('del-cust-err').style.display = 'none';
+  document.getElementById('modal-del-cust').classList.add('open');
+}
+
+async function confirmDeleteCust() {
+  const pass = document.getElementById('del-cust-pass').value;
+  const errEl = document.getElementById('del-cust-err');
+  errEl.style.display = 'none';
+
+  if (!pass) {
+    errEl.textContent = 'أدخل كلمة السر أولاً';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  // التحقق من كلمة سر الأدمن
+  try {
+    const { collection, getDocs, query, where, doc, deleteDoc } = F();
+    const q = query(
+      collection(D(), 'users'),
+      where('username', '==', currentUser.username),
+      where('password', '==', pass)
+    );
+    const snap = await getDocs(q);
+    if (snap.empty) {
+      errEl.textContent = 'كلمة السر غلط';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    const c = customers.find(x => x.id === deleteCustId);
+    toast('جاري الحذف...', 'info');
+
+    // حذف كل معاملات العميل
+    const txSnap = await getDocs(query(
+      collection(D(), 'transactions'),
+      where('customerId', '==', deleteCustId)
+    ));
+    for (const txDoc of txSnap.docs) {
+      await deleteDoc(doc(D(), 'transactions', txDoc.id));
+    }
+
+    // حذف العميل نفسه
+    await deleteDoc(doc(D(), 'customers', deleteCustId));
+
+    await logActivity('delete', `حذف العميل نهائياً: ${c.name} (${txSnap.size} معاملة)`);
+    toast(`تم حذف ${c.name} وكل معاملاته ✅`, 'ok');
+
+    closeModal('modal-del-cust');
+    closeModal('modal-cust');
+    deleteCustId = null;
+    await loadCustomers();
+  } catch(e) {
+    errEl.textContent = 'حدث خطأ أثناء الحذف';
+    errEl.style.display = 'block';
+    console.error(e);
+  }
 }
 
 // ============================================================
@@ -2442,7 +2538,7 @@ function toast(msg, type = 'ok') {
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
 // Close modals on overlay click
-['modal-cust', 'modal-del-tx', 'modal-archive', 'modal-logout', 'modal-del-user', 'modal-edit-cust', 'modal-purchase-done', 'modal-edit-user'].forEach(id => {
+['modal-cust', 'modal-del-tx', 'modal-archive', 'modal-logout', 'modal-del-user', 'modal-edit-cust', 'modal-purchase-done', 'modal-edit-user', 'modal-del-cust'].forEach(id => {
   document.getElementById(id).addEventListener('click', function(e) {
     if (e.target === this) closeModal(id);
   });
