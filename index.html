@@ -1516,6 +1516,8 @@ async function addPayment() {
     await refreshCustomer(custId);
   } catch(e) { toast('حدث خطأ', 'err'); console.error(e); }
 }
+
+function showCustInfo(type) {
   const id = document.getElementById(type + '-cust').value;
   const c = customers.find(x => x.id === id);
   const v = c ? fmt(c.totalDebt || 0) + ' ج' : '';
