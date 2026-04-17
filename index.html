@@ -9,7 +9,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
   getFirestore, collection, doc, addDoc, updateDoc, deleteDoc,
-  getDocs, getDoc, query, orderBy, where, serverTimestamp, limit, startAfter
+  getDocs, getDoc, query, orderBy, where, serverTimestamp, limit, startAfter, increment
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 // =============================================
@@ -27,7 +27,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 window.db = db;
-window.fs = { collection, doc, addDoc, updateDoc, deleteDoc, getDocs, getDoc, query, orderBy, where, serverTimestamp, limit, startAfter };
+window.fs = { collection, doc, addDoc, updateDoc, deleteDoc, getDocs, getDoc, query, orderBy, where, serverTimestamp, limit, startAfter, increment };
 window.dispatchEvent(new Event('firebase-ready'));
 </script>
 
@@ -52,6 +52,20 @@ window.dispatchEvent(new Event('firebase-ready'));
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: 'Cairo', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+/* ===== LIGHT THEME ===== */
+body.theme-light {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface2: #f0f2f5;
+  --border: #d8dbe3;
+  --text: #1c2330;
+  --text2: #5b6376;
+  /* نترك الألوان الأساسية كما هي */
+}
+body.theme-light #login-screen {
+  background: radial-gradient(ellipse at 60% 40%, #ffffff 0%, #f5f6f8 70%);
+}
 
 /* ===== LOGIN ===== */
 #login-screen {
@@ -153,6 +167,15 @@ body { font-family: 'Cairo', sans-serif; background: var(--bg); color: var(--tex
   transition: all 0.2s;
 }
 .btn-logout:hover { border-color: var(--red); color: var(--red); }
+
+.btn-theme {
+  background: none; border: 1px solid var(--border);
+  border-radius: 8px; padding: 5px 10px;
+  color: var(--text2); font-family: 'Cairo', sans-serif;
+  font-size: 12px; cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-theme:hover { border-color: var(--accent); color: var(--accent); }
 
 /* NAV */
 .nav {
@@ -465,6 +488,9 @@ select option { background: var(--surface2); }
 <!-- ===== LOGIN ===== -->
 <div id="login-screen">
   <div class="login-box">
+    <div style="display:flex; justify-content:flex-start; margin-bottom:12px">
+      <button class="btn-theme" type="button" onclick="toggleTheme()" id="btn-theme-login">🌓</button>
+    </div>
     <div class="login-logo">
       <div class="logo-icon">💊</div>
       <h1>صيدلية — دفتر الدين</h1>
@@ -499,6 +525,7 @@ select option { background: var(--surface2); }
         👤 <span id="disp-name">—</span>
         <span class="role-badge" id="disp-role">—</span>
       </div>
+      <button class="btn-theme" onclick="toggleTheme()" id="btn-theme">—</button>
       <button class="btn-logout" onclick="doLogout()">خروج</button>
     </div>
   </div>
@@ -597,7 +624,7 @@ select option { background: var(--surface2); }
           <div class="fg"><label>ملاحظة إضافية</label><input type="text" id="pur-note" placeholder="مثال: شراب أطفال..."></div>
           <div class="fg"><label>التاريخ</label><input type="date" id="pur-date"></div>
         </div>
-        <button class="btn btn-accent" onclick="addPurchase()">💊 تسجيل الصرف</button>
+        <button class="btn btn-accent" id="btn-add-purchase" onclick="addPurchase()">💊 تسجيل الصرف</button>
       </div>
     </div>
 
@@ -626,7 +653,7 @@ select option { background: var(--surface2); }
         <div class="frow">
           <div class="fg"><label>التاريخ</label><input type="date" id="pay-date"></div>
         </div>
-        <button class="btn btn-green" onclick="addPayment()">💵 تسجيل السداد</button>
+        <button class="btn btn-green" id="btn-add-payment" onclick="addPayment()">💵 تسجيل السداد</button>
       </div>
     </div>
 
@@ -1023,8 +1050,51 @@ let pendingArchive = null;
 let medicinesList = [];
 let filteredList = [];
 let searchTimeout = null;
+// منع تكرار التسجيل بسبب الضغط المتكرر/بطء الشبكة
+let purchaseSubmitting = false;
+let paymentSubmitting = false;
 
 const PAGE_SIZE = 20;
+
+// ============================================================
+// THEME (دارك/لايت)
+// ============================================================
+const THEME_KEY = 'shokok_theme';
+
+function applyTheme(theme) {
+  const isLight = theme === 'light';
+  document.body.classList.toggle('theme-light', isLight);
+  localStorage.setItem(THEME_KEY, isLight ? 'light' : 'dark');
+  updateThemeButtons();
+}
+
+function getSavedTheme() {
+  const t = localStorage.getItem(THEME_KEY);
+  if (t === 'light' || t === 'dark') return t;
+  // افتراضي: حسب إعداد الجهاز
+  try {
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  } catch { return 'dark'; }
+}
+
+function updateThemeButtons() {
+  const isLight = document.body.classList.contains('theme-light');
+  const label = isLight ? '🌙 دارك' : '☀️ لايت';
+  const btn = document.getElementById('btn-theme');
+  if (btn) btn.textContent = label;
+  const btnLogin = document.getElementById('btn-theme-login');
+  if (btnLogin) btnLogin.textContent = label;
+}
+
+function toggleTheme() {
+  const isLight = document.body.classList.contains('theme-light');
+  applyTheme(isLight ? 'dark' : 'light');
+}
+
+// تفعيل الثيم عند فتح الصفحة
+document.addEventListener('DOMContentLoaded', () => {
+  applyTheme(getSavedTheme());
+});
 
 // ============================================================
 // FIREBASE SHORTCUTS
@@ -1203,12 +1273,13 @@ async function loadMoreCustomers() {
 }
 
 function renderCustomers() {
-  const q = document.getElementById('search-inp').value.toLowerCase();
+  const rawQ = (document.getElementById('search-inp')?.value || '').trim();
+  const q = normAr(rawQ);
   filteredList = customers.filter(c => c.archived === (custTab === 'archived'));
   if (q) filteredList = filteredList.filter(c =>
-    c.name.toLowerCase().includes(q) ||
-    (c.phone||'').includes(q) ||
-    (c.notes||'').toLowerCase().includes(q)
+    normAr(c.name).includes(q) ||
+    (c.phone||'').includes(rawQ) ||
+    normAr(c.notes||'').includes(q)
   );
 
   const el = document.getElementById('cust-list');
@@ -1233,9 +1304,9 @@ function renderCustomers() {
         </div>
       </div>
       <div class="ci-right">
-        ${overLimit ? `<span class="limit-badge">⚠️ تجاوز الحد</span>` : ''}
+        <span class="limit-badge" id="limit-badge-${c.id}" style="display:${overLimit ? 'inline-flex' : 'none'}">⚠️ تجاوز الحد</span>
         <div class="ci-debt">
-          <div class="debt-val ${debt==0?'zero':overLimit?'over-limit':''}">${fmt(debt)} ج</div>
+          <div class="debt-val ${debt==0?'zero':overLimit?'over-limit':''}" id="debt-val-${c.id}">${fmt(debt)} ج</div>
           <div class="debt-lbl">الرصيد</div>
         </div>
       </div>
@@ -1254,6 +1325,9 @@ function renderCustomers() {
     document.getElementById('pg-info').textContent = `إجمالي المحمّل: ${customers.length} عميل`;
     if (btn) btn.style.display = 'none';
   }
+
+  // تحديث الرصيد في الكروت من المعاملات (للعملاء الظاهرين) لتجنب اختلافات cache
+  refreshVisibleDebts(filteredList);
 }
 
 function filterCust() {
@@ -1276,12 +1350,12 @@ function filterCust() {
       // جلب كل العملاء للبحث الكامل (مع cache)
       await fetchAllCustomers();
 
-      const qLower = q.toLowerCase();
+      const qLower = normAr(q);
       const results = customers.filter(c =>
         c.archived === (custTab === 'archived') &&
-        (c.name.toLowerCase().includes(qLower) ||
-         (c.phone||'').includes(qLower) ||
-         (c.notes||'').toLowerCase().includes(qLower))
+        (normAr(c.name).includes(qLower) ||
+         (c.phone||'').includes(q) ||
+         normAr(c.notes||'').includes(qLower))
       );
 
       if (!results.length) {
@@ -1302,9 +1376,9 @@ function filterCust() {
             </div>
           </div>
           <div class="ci-right">
-            ${overLimit ? `<span class="limit-badge">⚠️ تجاوز الحد</span>` : ''}
+            <span class="limit-badge" id="limit-badge-${c.id}" style="display:${overLimit ? 'inline-flex' : 'none'}">⚠️ تجاوز الحد</span>
             <div class="ci-debt">
-              <div class="debt-val ${debt==0?'zero':overLimit?'over-limit':''}">${fmt(debt)} ج</div>
+              <div class="debt-val ${debt==0?'zero':overLimit?'over-limit':''}" id="debt-val-${c.id}">${fmt(debt)} ج</div>
               <div class="debt-lbl">الرصيد</div>
             </div>
           </div>
@@ -1315,6 +1389,9 @@ function filterCust() {
       document.getElementById('pg-info').textContent = `${results.length} نتيجة`;
       const btn = document.getElementById('load-more-btn');
       if (btn) btn.style.display = 'none';
+
+      // تحديث الرصيد في نتائج البحث (لأنها تعتمد على totalDebt وقد يكون قديم)
+      refreshVisibleDebts(results);
 
     } catch(e) {
       el.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><p>حدث خطأ في البحث</p></div>`;
@@ -1426,85 +1503,129 @@ function previewCalc(raw) {
 }
 
 async function addPurchase() {
+  if (purchaseSubmitting) return;
+  purchaseSubmitting = true;
+  const btn = document.getElementById('btn-add-purchase');
+  const oldBtnText = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ جاري الحفظ...'; }
+
   const custId = document.getElementById('pur-cust').value;
   const rawAmt = document.getElementById('pur-amt').value.trim();
   const medicine = document.getElementById('pur-medicine').value.trim();
   const extraNote = document.getElementById('pur-note').value.trim();
   const date = document.getElementById('pur-date').value;
 
-  if (!custId) return toast('اختر العميل', 'err');
-  if (!medicine) return toast('أدخل اسم الدواء', 'err');
-  if (!rawAmt) return toast('أدخل المبلغ', 'err');
+  if (!custId) { purchaseSubmitting = false; if (btn) { btn.disabled = false; btn.textContent = oldBtnText; } return toast('اختر العميل', 'err'); }
+  if (!medicine) { purchaseSubmitting = false; if (btn) { btn.disabled = false; btn.textContent = oldBtnText; } return toast('أدخل اسم الدواء', 'err'); }
+  if (!rawAmt) { purchaseSubmitting = false; if (btn) { btn.disabled = false; btn.textContent = oldBtnText; } return toast('أدخل المبلغ', 'err'); }
 
   // حساب التعبير الرياضي
   const amount = calcExpr(rawAmt);
-  if (isNaN(amount) || amount <= 0) return toast('المبلغ أو التعبير غير صحيح', 'err');
+  if (isNaN(amount) || amount <= 0) { purchaseSubmitting = false; if (btn) { btn.disabled = false; btn.textContent = oldBtnText; } return toast('المبلغ أو التعبير غير صحيح', 'err'); }
 
   const note = extraNote ? `${medicine} — ${extraNote}` : medicine;
   const cust = customers.find(c => c.id === custId);
   const newDebt = (cust.totalDebt || 0) + amount;
 
+  // منع تكرار نفس العملية خلال ثوانٍ (في حال انقطاع/بطء الشبكة أو إعادة المحاولة)
+  const purchaseKey = txKey({ customerId: custId, type: 'purchase', date, amount, note, medicine });
+  if (isRecentDuplicateTx(purchaseKey)) {
+    purchaseSubmitting = false;
+    if (btn) { btn.disabled = false; btn.textContent = oldBtnText; }
+    return toast('تم تسجيل هذه العملية بالفعل (منع تكرار)', 'info');
+  }
+  markRecentTx(purchaseKey);
+
   if (cust.debtLimit && newDebt > cust.debtLimit) {
     const remaining = cust.debtLimit - (cust.totalDebt || 0);
+    purchaseSubmitting = false;
+    if (btn) { btn.disabled = false; btn.textContent = oldBtnText; }
     return toast(`🚫 تجاوز الحد الأقصى! المتبقي المسموح: ${fmt(remaining > 0 ? remaining : 0)} ج فقط`, 'err');
   }
 
   try {
-    const { collection, doc, addDoc, updateDoc, serverTimestamp } = F();
+    const { collection, doc, addDoc, updateDoc, serverTimestamp, increment } = F();
     await addDoc(collection(D(), 'transactions'), {
       customerId: custId, type: 'purchase', amount,
       note, medicine, date,
+      clientKey: purchaseKey,
       createdBy: currentUser.id, createdByName: currentUser.displayName || currentUser.username,
       deleted: false, createdAt: serverTimestamp()
     });
-    await updateDoc(doc(D(), 'customers', custId), { totalDebt: newDebt });
+    // تحديث الرصيد بشكل تراكمي لتفادي أخطاء الـ cache أو تعدد الأجهزة
+    await updateDoc(doc(D(), 'customers', custId), { totalDebt: increment(amount) });
 
     await saveMedicineToDB(medicine);
 
     await logActivity('purchase', `سجّل صرف ${fmt(amount)} ج على ${cust.name} — ${medicine}`);
+
+    // جلب الرصيد الحقيقي بعد التحديث
+    await refreshCustomer(custId);
+    const fresh = customers.find(c => c.id === custId);
+    const finalDebt = fresh ? (fresh.totalDebt || 0) : newDebt;
 
     // عرض شاشة تأكيد الصرف
     document.getElementById('pd-cust-name').textContent = cust.name;
     document.getElementById('pd-medicine').textContent = medicine + (extraNote ? ` — ${extraNote}` : '');
     document.getElementById('pd-amount').textContent = fmt(amount) + ' ج';
     document.getElementById('pd-date').textContent = date;
-    document.getElementById('pd-total').textContent = fmt(newDebt) + ' ج';
+    document.getElementById('pd-total').textContent = fmt(finalDebt) + ' ج';
     // حفظ بيانات للطباعة
-    window._lastReceipt = { custName: cust.name, medicine, extraNote, amount, date, newDebt };
+    window._lastReceipt = { custName: cust.name, medicine, extraNote, amount, date, newDebt: finalDebt };
     document.getElementById('modal-purchase-done').classList.add('open');
 
     document.getElementById('pur-amt').value = '';
     document.getElementById('pur-amt-preview').textContent = '';
     document.getElementById('pur-note').value = '';
     document.getElementById('pur-medicine').value = '';
-    document.getElementById('pur-debt').value = fmt(newDebt) + ' ج';
+    document.getElementById('pur-debt').value = fmt(finalDebt) + ' ج';
     document.getElementById('pur-cust-search').value = '';
     document.getElementById('pur-cust').value = '';
-    await refreshCustomer(custId);
   } catch(e) { toast('حدث خطأ', 'err'); console.error(e); }
+  finally {
+    purchaseSubmitting = false;
+    if (btn) { btn.disabled = false; btn.textContent = oldBtnText; }
+  }
 }
 async function addPayment() {
+  if (paymentSubmitting) return;
+  paymentSubmitting = true;
+  const btn = document.getElementById('btn-add-payment');
+  const oldBtnText = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ جاري الحفظ...'; }
+
   const custId = document.getElementById('pay-cust').value;
   const amount = parseFloat(document.getElementById('pay-amt').value);
   const note = document.getElementById('pay-note').value.trim();
   const date = document.getElementById('pay-date').value;
 
-  if (!custId) return toast('اختر العميل', 'err');
-  if (!amount || amount <= 0) return toast('أدخل مبلغ صحيح', 'err');
+  if (!custId) { paymentSubmitting = false; if (btn) { btn.disabled = false; btn.textContent = oldBtnText; } return toast('اختر العميل', 'err'); }
+  if (!amount || amount <= 0) { paymentSubmitting = false; if (btn) { btn.disabled = false; btn.textContent = oldBtnText; } return toast('أدخل مبلغ صحيح', 'err'); }
 
   const cust = customers.find(c => c.id === custId);
   const newDebt = Math.max(0, (cust.totalDebt || 0) - amount);
+  const finalNote = note || 'دفعة سداد';
+
+  const payKey = txKey({ customerId: custId, type: 'payment', date, amount, note: finalNote });
+  if (isRecentDuplicateTx(payKey)) {
+    paymentSubmitting = false;
+    if (btn) { btn.disabled = false; btn.textContent = oldBtnText; }
+    return toast('تم تسجيل هذه العملية بالفعل (منع تكرار)', 'info');
+  }
+  markRecentTx(payKey);
 
   try {
-    const { collection, doc, addDoc, updateDoc, serverTimestamp } = F();
+    const { collection, doc, addDoc, updateDoc, serverTimestamp, increment } = F();
     await addDoc(collection(D(), 'transactions'), {
       customerId: custId, type: 'payment', amount,
-      note: note || 'دفعة سداد', date,
+      note: finalNote, date,
+      clientKey: payKey,
       createdBy: currentUser.id, createdByName: currentUser.displayName || currentUser.username,
       deleted: false, createdAt: serverTimestamp()
     });
     await updateDoc(doc(D(), 'customers', custId), {
-      totalDebt: newDebt,
+      // تحديث تراكمي لتفادي أخطاء الـ cache أو تعدد الأجهزة
+      totalDebt: increment(-amount),
       lastPaymentDate: date
     });
 
@@ -1512,11 +1633,17 @@ async function addPayment() {
     toast(`تم تسجيل سداد ${fmt(amount)} ج ✅`, 'ok');
     document.getElementById('pay-amt').value = '';
     document.getElementById('pay-note').value = '';
-    document.getElementById('pay-debt').value = fmt(newDebt) + ' ج';
+    await refreshCustomer(custId);
+    const fresh = customers.find(c => c.id === custId);
+    const finalDebt = fresh ? (fresh.totalDebt || 0) : newDebt;
+    document.getElementById('pay-debt').value = fmt(finalDebt) + ' ج';
     document.getElementById('pay-cust-search').value = '';
     document.getElementById('pay-cust').value = '';
-    await refreshCustomer(custId);
   } catch(e) { toast('حدث خطأ', 'err'); console.error(e); }
+  finally {
+    paymentSubmitting = false;
+    if (btn) { btn.disabled = false; btn.textContent = oldBtnText; }
+  }
 }
 
 function showCustInfo(type) {
@@ -1548,11 +1675,12 @@ function searchCust(type) {
   custSugTimeout[type] = setTimeout(async () => {
     const searchEl = document.getElementById(type + '-cust-search');
     const box = document.getElementById(type + '-cust-suggestions');
-    const q = (searchEl?.value || '').trim().toLowerCase();
+    const rawQ = (searchEl?.value || '').trim();
+    const q = normAr(rawQ);
 
     let list = customers.filter(c => !c.archived);
     let results = q
-      ? list.filter(c => c.name.toLowerCase().includes(q) || (c.phone||'').includes(q))
+      ? list.filter(c => normAr(c.name).includes(q) || (c.phone||'').includes(rawQ))
       : list.slice(0, 10);
 
     // لو البحث موجود وعدد النتائج قليل — اجيب من Firebase كمان
@@ -1561,7 +1689,7 @@ function searchCust(type) {
         await fetchAllCustomers();
         results = customers.filter(c =>
           !c.archived &&
-          (c.name.toLowerCase().includes(q) || (c.phone||'').includes(q))
+          (normAr(c.name).includes(q) || (c.phone||'').includes(rawQ))
         ).slice(0, 10);
       } catch(e) { console.error(e); }
     }
@@ -1622,8 +1750,19 @@ async function openCustModal(id) {
       where('customerId', '==', id)
       // orderBy('createdAt', 'desc')
     ));
-    const txs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // ملاحظة: لو حصل تكرار إدخال لنفس المعاملة بسبب الشبكة، هنشيله من العرض
+    let txs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    txs = dedupeTxs(txs);
+    txs.sort((a, b) => {
+      const da = a.date || '';
+      const db = b.date || '';
+      if (da !== db) return da.localeCompare(db);
+      const ta = a.createdAt?.seconds ? a.createdAt.seconds : 0;
+      const tb = b.createdAt?.seconds ? b.createdAt.seconds : 0;
+      return ta - tb;
+    });
     const isAdmin = currentUser.role === 'admin';
+    const computedDebt = computeDebtFromTxs(c, txs);
 
     const typeIcon = { purchase:'💊', payment:'💵', opening:'📌' };
     const archLabel = c.archived ? 'استعادة من الأرشيف' : 'أرشفة';
@@ -1635,7 +1774,7 @@ async function openCustModal(id) {
           <div class="sl">📌 أول المدة ${isAdmin ? '<span style="font-size:10px;color:var(--accent)">✏️ تعديل</span>' : ''}</div>
           <div class="sv blue">${fmt(c.openingBalance||0)} ج</div>
         </div>
-        <div class="scard"><div class="sl">💳 الرصيد الحالي</div><div class="sv ${(c.totalDebt||0)>0?'red':'green'}">${fmt(c.totalDebt||0)} ج</div></div>
+        <div class="scard"><div class="sl">💳 الرصيد الحالي</div><div class="sv ${(computedDebt||0)>0?'red':'green'}">${fmt(computedDebt||0)} ج</div></div>
         ${c.debtLimit ? `<div class="scard"><div class="sl">🔒 الحد الأقصى</div><div class="sv orange">${fmt(c.debtLimit)} ج</div></div>` : ''}
         <div class="scard"><div class="sl">📅 آخر سداد</div><div class="sv accent" style="font-size:14px">${c.lastPaymentDate||'—'}</div></div>
       </div>
@@ -1662,6 +1801,7 @@ async function openCustModal(id) {
       <div style="display:flex; gap:7px; margin-bottom:16px; flex-wrap:wrap">
         <button class="btn btn-blue btn-sm" onclick="printStatement('${id}')">🖨️ كشف حساب</button>
         ${c.phone ? `<button class="btn btn-green btn-sm" onclick="sendWhatsapp('${id}')">📱 WhatsApp</button>` : ''}
+        ${isAdmin ? `<button class="btn btn-ghost btn-sm" onclick="recomputeCustomerDebt('${id}')">🔄 إعادة حساب الرصيد</button>` : ''}
         ${isAdmin ? `<button class="btn btn-ghost btn-sm" onclick="openEditCust('${id}')">✏️ تعديل البيانات</button>` : ''}
         ${isAdmin ? `<button class="btn btn-ghost btn-sm" onclick="archiveCustomer('${id}', ${c.archived})">${archIcon} ${archLabel}</button>` : ''}
         ${isAdmin ? `<button class="btn btn-red btn-sm" onclick="openDeleteCust('${id}')">🗑 حذف العميل</button>` : ''}
@@ -1725,13 +1865,13 @@ function editOpeningBalance(custId) {
 async function confirmEditOpening(custId, newOpening, oldOpening) {
   const c = customers.find(x => x.id === custId);
   const diff = newOpening - oldOpening;
-  const newTotalDebt = Math.max(0, (c.totalDebt || 0) + diff);
 
   try {
-    const { doc, updateDoc, collection, addDoc, serverTimestamp } = F();
+    const { doc, updateDoc, collection, addDoc, serverTimestamp, increment } = F();
     await updateDoc(doc(D(), 'customers', custId), {
       openingBalance: newOpening,
-      totalDebt: newTotalDebt
+      // تحديث تراكمي بدل الاعتماد على قيمة محلية قد تكون قديمة
+      totalDebt: increment(diff)
     });
     // تسجيل معاملة تعديل رصيد أول المدة
     await addDoc(collection(D(), 'transactions'), {
@@ -1884,7 +2024,7 @@ async function confirmDeleteTx() {
   if (!reason) return toast('أدخل سبب الحذف', 'err');
 
   try {
-    const { doc, updateDoc, serverTimestamp } = F();
+    const { doc, updateDoc, serverTimestamp, increment } = F();
     await updateDoc(doc(D(), 'transactions', delTxData.txId), {
       deleted: true,
       deleteReason: reason,
@@ -1893,14 +2033,13 @@ async function confirmDeleteTx() {
       deletedAt: serverTimestamp()
     });
 
-    // تعديل رصيد العميل
-    const cust = customers.find(c => c.id === delTxData.custId);
-    let newDebt = cust.totalDebt || 0;
-    if (delTxData.type === 'purchase' || delTxData.type === 'opening') newDebt -= delTxData.amount;
-    else if (delTxData.type === 'payment') newDebt += delTxData.amount;
-    newDebt = Math.max(0, newDebt);
-
-    await updateDoc(doc(D(), 'customers', delTxData.custId), { totalDebt: newDebt });
+    // تعديل رصيد العميل بشكل تراكمي (بدون الاعتماد على cache)
+    const delta = (delTxData.type === 'purchase' || delTxData.type === 'opening')
+      ? -delTxData.amount
+      : (delTxData.type === 'payment')
+        ? +delTxData.amount
+        : 0;
+    await updateDoc(doc(D(), 'customers', delTxData.custId), { totalDebt: increment(delta) });
     await logActivity('delete', `حذف معاملة ${fmt(delTxData.amount)} ج — السبب: ${reason}`);
 
     closeModal('modal-del-tx');
@@ -1969,9 +2108,12 @@ async function printStatement(custId) {
       where('deleted', '==', false)
       // orderBy('date')
     ));
-    const txs = snap.docs.map(d => d.data());
+    let txs = snap.docs.map(d => d.data());
+    txs = dedupeTxs(txs);
+    txs.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
     const typeLabel = { purchase: 'صرف أدوية', payment: 'سداد', opening: 'رصيد أول المدة' };
     const today = new Date().toLocaleDateString('ar-EG');
+    const computedDebt = computeDebtFromTxs(c, txs);
 
     document.getElementById('print-area').innerHTML = `
       <div class="print-header">
@@ -1996,7 +2138,7 @@ async function printStatement(custId) {
         </tbody>
       </table>
       <div class="print-footer">
-        <div>إجمالي الرصيد المستحق: <strong>${fmt(c.totalDebt || 0)} ج</strong></div>
+        <div>إجمالي الرصيد المستحق: <strong>${fmt(computedDebt || 0)} ج</strong></div>
         <div>آخر سداد: ${c.lastPaymentDate || '—'}</div>
       </div>
     `;
@@ -2020,7 +2162,11 @@ async function sendWhatsapp(custId) {
       // orderBy('createdAt', 'desc'),
       limit(5)
     ));
-    const txs = snap.docs.map(d => d.data());
+    let txs = snap.docs.map(d => d.data());
+    txs = dedupeTxs(txs);
+    // ترتيب أحدث أولاً ثم نأخذ آخر 5
+    txs.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    txs = txs.slice(0, 5);
     const typeLabel = { purchase: '💊', payment: '💵', opening: '📌' };
 
     let msg = `💊 *كشف حساب — صيدلية*\n`;
@@ -2558,12 +2704,13 @@ function switchRepTab(t) {
 }
 
 function renderFullReport() {
-  const q = (document.getElementById('rep-search')?.value || '').trim().toLowerCase();
+  const rawQ = (document.getElementById('rep-search')?.value || '').trim();
+  const q = normAr(rawQ);
   let list = customers.filter(c => !c.archived);
 
   if (repTab === 'debt')    list = list.filter(c => (c.totalDebt || 0) > 0);
   if (repTab === 'settled') list = list.filter(c => (c.totalDebt || 0) === 0);
-  if (q) list = list.filter(c => c.name.toLowerCase().includes(q) || (c.phone||'').includes(q));
+  if (q) list = list.filter(c => normAr(c.name).includes(q) || (c.phone||'').includes(rawQ));
 
   list.sort((a, b) => (b.totalDebt||0) - (a.totalDebt||0));
 
@@ -2612,11 +2759,12 @@ function renderFullReport() {
 }
 
 function exportAllToExcel() {
-  const q = (document.getElementById('rep-search')?.value || '').trim().toLowerCase();
+  const rawQ = (document.getElementById('rep-search')?.value || '').trim();
+  const q = normAr(rawQ);
   let list = customers.filter(c => !c.archived);
   if (repTab === 'debt')    list = list.filter(c => (c.totalDebt || 0) > 0);
   if (repTab === 'settled') list = list.filter(c => (c.totalDebt || 0) === 0);
-  if (q) list = list.filter(c => c.name.toLowerCase().includes(q) || (c.phone||'').includes(q));
+  if (q) list = list.filter(c => normAr(c.name).includes(q) || (c.phone||'').includes(rawQ));
   list.sort((a, b) => (b.totalDebt||0) - (a.totalDebt||0));
 
   const data = [
@@ -2671,6 +2819,210 @@ function printPurchaseReceipt() {
 // ============================================================
 // HELPERS
 // ============================================================
+// توحيد/تطبيع النص العربي للبحث (تطبيق فكرة "شكل واحد للحرف"):
+// - توحيد أشكال الألف: ا/أ/إ/آ/ٱ... => ا
+// - توحيد الياء: ي/ى/ئ/ی... => ي
+// - توحيد الواو: و/ؤ... => و
+// - توحيد الكاف: ك/ک => ك
+// - توحيد الهاء/التاء المربوطة: ه/ة => ه
+// - إزالة التشكيل والتطويل، وإزالة الهمزة المفردة
+// - تحويل أشكال العرض (Presentation Forms) باستخدام NFKC
+function normAr(s) {
+  if (s === null || s === undefined) return '';
+  let v = String(s);
+  // يحول أشكال الحروف الخاصة/المتلاصقة إلى الشكل القياسي
+  try { v = v.normalize('NFKC'); } catch {}
+
+  return v
+    // (اختياري لكن مفيد) توحيد لا المتلاصقة: ﻻ ﻷ ﻹ ﻵ ...
+    .replace(/[\uFEF5-\uFEFC]/g, 'لا')
+    // إزالة التشكيل + التطويل
+    .replace(/[\u064B-\u065F\u0670\u0640]/g, '')
+    // توحيد الألف
+    .replace(/[إأآٱٲٳٵ]/g, 'ا')
+    // توحيد الهاء/التاء المربوطة وأشكالها
+    .replace(/[ةۀ]/g, 'ه')
+    // توحيد الواو
+    .replace(/[ؤۄۅ]/g, 'و')
+    // توحيد الياء
+    .replace(/[ىئیۑ]/g, 'ي')
+    // توحيد الكاف (فارسي)
+    .replace(/ک/g, 'ك')
+    // إزالة الهمزة المفردة
+    .replace(/ء/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+// ============================================================
+// منع تكرار المعاملات (Idempotency على الواجهة)
+// ============================================================
+const RECENT_TX_KEY = 'shokok_recent_tx';
+
+function txKey(tx) {
+  const amount = Number(tx.amount || 0);
+  const amt = isFinite(amount) ? amount.toFixed(2) : '0.00';
+  const note = String(tx.note || '').trim();
+  const med  = String(tx.medicine || '').trim();
+  return [
+    tx.customerId || '',
+    tx.type || '',
+    tx.date || '',
+    amt,
+    note,
+    med
+  ].join('|');
+}
+
+function isRecentDuplicateTx(key, windowMs = 8000) {
+  try {
+    const raw = localStorage.getItem(RECENT_TX_KEY);
+    if (!raw) return false;
+    const obj = JSON.parse(raw);
+    return obj && obj.key === key && (Date.now() - (obj.ts || 0)) < windowMs;
+  } catch { return false; }
+}
+
+function markRecentTx(key) {
+  try { localStorage.setItem(RECENT_TX_KEY, JSON.stringify({ key, ts: Date.now() })); } catch {}
+}
+
+function dedupeTxs(txs) {
+  const out = [];
+  const seen = new Set();
+  for (const tx of (txs || [])) {
+    const key = tx.clientKey || txKey(tx);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(tx);
+  }
+  return out;
+}
+
+function computeDebtFromTxs(customer, txs) {
+  const opening = Number(customer?.openingBalance || 0);
+  let purchases = 0;
+  let payments = 0;
+  for (const tx of (txs || [])) {
+    if (tx.deleted) continue;
+    const amt = Number(tx.amount || 0);
+    if (!isFinite(amt)) continue;
+    if (tx.type === 'purchase') purchases += amt;
+    if (tx.type === 'payment') payments += amt;
+    // لا نحسب opening هنا لأن openingBalance في وثيقة العميل هو المصدر
+  }
+  const total = opening + purchases - payments;
+  // ضبط تقريبي لرقمين عشريين
+  return Math.round(total * 100) / 100;
+}
+
+async function recomputeCustomerDebt(custId) {
+  try {
+    const { doc, getDoc, collection, getDocs, query, where, updateDoc } = F();
+    const custSnap = await getDoc(doc(D(), 'customers', custId));
+    if (!custSnap.exists()) return toast('العميل غير موجود', 'err');
+    const cust = { id: custSnap.id, ...custSnap.data() };
+
+    const snap = await getDocs(query(
+      collection(D(), 'transactions'),
+      where('customerId', '==', custId),
+      where('deleted', '==', false)
+    ));
+    let txs = snap.docs.map(d => d.data());
+    txs = dedupeTxs(txs);
+
+    const computed = computeDebtFromTxs(cust, txs);
+
+    // حساب آخر سداد من المعاملات (Payment)
+    const lastPay = txs
+      .filter(t => t.type === 'payment' && t.date)
+      .map(t => t.date)
+      .sort()
+      .pop() || null;
+
+    await updateDoc(doc(D(), 'customers', custId), {
+      totalDebt: computed,
+      lastPaymentDate: lastPay
+    });
+
+    toast('تمت إعادة حساب الرصيد ✅', 'ok');
+    await refreshCustomer(custId);
+    openCustModal(custId);
+  } catch (e) {
+    console.error(e);
+    toast('حدث خطأ أثناء إعادة الحساب', 'err');
+  }
+}
+
+// ============================================================
+// تحديث رصيد الكروت في صفحة العملاء/نتائج البحث
+// (لأن totalDebt قد يكون قديم، فنحسب من المعاملات للظاهرين فقط)
+// ============================================================
+const DEBT_CACHE_TTL = 60 * 1000; // دقيقة
+const _debtCache = new Map(); // custId -> { debt, ts }
+const _debtInflight = new Set(); // custId
+
+function getCachedDebt(custId) {
+  const v = _debtCache.get(custId);
+  if (!v) return null;
+  if ((Date.now() - v.ts) > DEBT_CACHE_TTL) return null;
+  return v.debt;
+}
+
+async function computeDebtForCustomer(cust) {
+  const { collection, getDocs, query, where } = F();
+  const snap = await getDocs(query(
+    collection(D(), 'transactions'),
+    where('customerId', '==', cust.id),
+    where('deleted', '==', false)
+  ));
+  let txs = snap.docs.map(d => d.data());
+  txs = dedupeTxs(txs);
+  const debt = computeDebtFromTxs(cust, txs);
+  return debt;
+}
+
+function applyDebtToCard(custId, debt, debtLimit) {
+  const debtEl = document.getElementById(`debt-val-${custId}`);
+  if (debtEl) {
+    debtEl.textContent = `${fmt(debt)} ج`;
+    const overLimit = debtLimit && debt > debtLimit;
+    debtEl.className = `debt-val ${debt == 0 ? 'zero' : overLimit ? 'over-limit' : ''}`;
+  }
+  const badgeEl = document.getElementById(`limit-badge-${custId}`);
+  if (badgeEl) {
+    const overLimit = debtLimit && debt > debtLimit;
+    badgeEl.style.display = overLimit ? 'inline-flex' : 'none';
+  }
+}
+
+function refreshVisibleDebts(list, max = 25) {
+  // نعمل على أول عناصر فقط لتقليل استهلاك Firebase
+  const slice = (list || []).slice(0, max);
+  slice.forEach(c => {
+    if (!c || !c.id) return;
+
+    const cached = getCachedDebt(c.id);
+    if (cached !== null) {
+      applyDebtToCard(c.id, cached, c.debtLimit);
+      // تحديث الذاكرة أيضاً لتكون العمليات التالية أدق (حد الدين...)
+      c.totalDebt = cached;
+      return;
+    }
+    if (_debtInflight.has(c.id)) return;
+    _debtInflight.add(c.id);
+
+    computeDebtForCustomer(c)
+      .then(debt => {
+        _debtCache.set(c.id, { debt, ts: Date.now() });
+        c.totalDebt = debt;
+        applyDebtToCard(c.id, debt, c.debtLimit);
+      })
+      .catch(() => {})
+      .finally(() => _debtInflight.delete(c.id));
+  });
+}
+
 function fmt(n) {
   return parseFloat(n||0).toLocaleString('ar-EG', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
