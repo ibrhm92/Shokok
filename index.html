@@ -1559,28 +1559,28 @@ async function addPurchase() {
 
     await logActivity('purchase', `سجّل صرف ${fmt(amount)} ج على ${cust.name} — ${medicine}`);
 
-    // جلب الرصيد الحقيقي بعد التحديث
-    await refreshCustomer(custId);
-    const fresh = customers.find(c => c.id === custId);
-    const finalDebt = fresh ? (fresh.totalDebt || 0) : newDebt;
-
-    // عرض شاشة تأكيد الصرف
+    // عرض شاشة تأكيد الصرف بالقيمة المحسوبة محلياً فوراً
     document.getElementById('pd-cust-name').textContent = cust.name;
     document.getElementById('pd-medicine').textContent = medicine + (extraNote ? ` — ${extraNote}` : '');
     document.getElementById('pd-amount').textContent = fmt(amount) + ' ج';
     document.getElementById('pd-date').textContent = date;
-    document.getElementById('pd-total').textContent = fmt(finalDebt) + ' ج';
+    document.getElementById('pd-total').textContent = fmt(newDebt) + ' ج';
     // حفظ بيانات للطباعة
-    window._lastReceipt = { custName: cust.name, medicine, extraNote, amount, date, newDebt: finalDebt };
+    window._lastReceipt = { custName: cust.name, medicine, extraNote, amount, date, newDebt };
     document.getElementById('modal-purchase-done').classList.add('open');
 
     document.getElementById('pur-amt').value = '';
     document.getElementById('pur-amt-preview').textContent = '';
     document.getElementById('pur-note').value = '';
     document.getElementById('pur-medicine').value = '';
-    document.getElementById('pur-debt').value = fmt(finalDebt) + ' ج';
+    document.getElementById('pur-debt').value = fmt(newDebt) + ' ج';
     document.getElementById('pur-cust-search').value = '';
     document.getElementById('pur-cust').value = '';
+
+    // تحديث فوري للذاكرة والكاش ثم تحديث من السيرفر
+    cust.totalDebt = newDebt;
+    _debtCache.delete(custId);
+    refreshCustomer(custId);
   } catch(e) { toast('حدث خطأ', 'err'); console.error(e); }
   finally {
     purchaseSubmitting = false;
@@ -1633,12 +1633,14 @@ async function addPayment() {
     toast(`تم تسجيل سداد ${fmt(amount)} ج ✅`, 'ok');
     document.getElementById('pay-amt').value = '';
     document.getElementById('pay-note').value = '';
-    await refreshCustomer(custId);
-    const fresh = customers.find(c => c.id === custId);
-    const finalDebt = fresh ? (fresh.totalDebt || 0) : newDebt;
-    document.getElementById('pay-debt').value = fmt(finalDebt) + ' ج';
+    document.getElementById('pay-debt').value = fmt(newDebt) + ' ج';
     document.getElementById('pay-cust-search').value = '';
     document.getElementById('pay-cust').value = '';
+
+    // تحديث فوري للذاكرة والكاش ثم تحديث من السيرفر
+    cust.totalDebt = newDebt;
+    _debtCache.delete(custId);
+    refreshCustomer(custId);
   } catch(e) { toast('حدث خطأ', 'err'); console.error(e); }
   finally {
     paymentSubmitting = false;
